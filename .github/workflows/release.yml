@@ -1,0 +1,125 @@
+name: Build & Release
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    env:
+      PAYLOAD_REPOSITORY: igorcv88/Root-My-Galaxy-Payloads-S938B
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Validate pinned payload feed
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          repo = os.environ["PAYLOAD_REPOSITORY"]
+          commit_api = f"https://api.github.com/repos/{repo}/git/ref/heads/main"
+          request = urllib.request.Request(commit_api, headers={"User-Agent": "Root-My-Galaxy-CI"})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              commit = json.load(response)["object"]["sha"]
+          assert re.fullmatch(r"[0-9a-f]{40}", commit)
+
+          raw = f"https://raw.githubusercontent.com/{repo}/{commit}"
+          with urllib.request.urlopen(f"{raw}/support/targets-v2.json", timeout=30) as response:
+              manifest = json.load(response)
+
+          assert manifest["schemaVersion"] == 2
+          targets = manifest["targets"]
+          ids = [target["profileId"] for target in targets]
+          assert len(ids) == len(set(ids))
+
+          target = next(item for item in targets if item["profileId"] == "pa3q-S938BXXSBCZG3")
+          expected_kernel_release = "6.6.98-android15-8-pd6ff1cd-abogkiS938BXXSBCZG3-4k"
+          expected_kernel_version = (
+              "Linux version 6.6.98-android15-8-pd6ff1cd-abogkiS938BXXSBCZG3-4k "
+              "(kleaf@build-host) (Android (11368308, +pgo, +bolt, +lto, +mlgo, "
+              "based on r510928) clang version 18.0.0 "
+              "(https://android.googlesource.com/toolchain/llvm-project "
+              "477610d4d0d988e69dbc3fae4fe86bff3f07f2b5), LLD 18.0.0) "
+              "#1 SMP PREEMPT Thu Jul  2 00:48:56 UTC 2026"
+          )
+          assert target["model"] == "SM-S938B"
+          assert target["buildDisplay"] == "BP4A.251205.006.S938BXXSBCZG3"
+          assert target["kernelRelease"] == expected_kernel_release
+          assert target["kernelVersion"] == expected_kernel_version
+          assert target["sdk"] == 36
+          assert target["abi"] == "arm64-v8a"
+          assert target["pageSize"] == 4096
+
+          mutable_prefix = f"https://raw.githubusercontent.com/{repo}/main/"
+          for item in targets:
+              for artifact in (item["exploit"], item["kernelsu"]):
+                  url = artifact["url"]
+                  assert url.startswith(mutable_prefix), f"external payload URL: {url}"
+                  pinned_url = f"{raw}/{url.removeprefix(mutable_prefix)}"
+                  total = 0
+                  with urllib.request.urlopen(pinned_url, timeout=90) as response:
+                      while True:
+                          block = response.read(1024 * 1024)
+                          if not block:
+                              break
+                          total += len(block)
+                  assert total == artifact["size"], (
+                      f"payload size mismatch for {pinned_url}: {total} != {artifact['size']}"
+                  )
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"PAYLOAD_COMMIT={commit}\n")
+          print(f"Validated {len(targets)} profiles at payload commit {commit}")
+          PY
+
+      - name: Verify application payload endpoint
+        run: |
+          set -eu
+          FILE=app/src/main/java/dev/busung/s25uroot/PayloadRepository.kt
+          grep -F 'private const val PAYLOAD_REPOSITORY = "igorcv88/Root-My-Galaxy-Payloads-S938B"' "$FILE"
+          if grep -F 'BuSung-dev/Root-My-Galaxy-Payloads' "$FILE"; then
+            echo "Application still references the upstream mutable feed" >&2
+            exit 1
+          fi
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Rename APK
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Root-My-Galaxy-${SHORT_SHA}.apk
+
+      - name: Upload Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "app/build/outputs/apk/debug/Root-My-Galaxy-${{ env.SHORT_SHA }}.apk"
+          name: "Commit: ${{ env.SHORT_SHA }}"
+          tag: "${{ env.SHORT_SHA }}"
+          commit: ${{ github.sha }}
+          body: "Automated build for commit ${{ env.SHORT_SHA }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
