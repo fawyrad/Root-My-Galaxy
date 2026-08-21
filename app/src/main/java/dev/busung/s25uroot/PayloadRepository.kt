@@ -7,15 +7,88 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import org.json.JSONObject
 
 data class VerifiedPayloads(
     val profile: TargetProfile,
     val exploit: File,
-    val kernelSu: File,
+    val kernelSu: File?,
 )
 
 class PayloadRepository(private val context: Context) {
+    fun customTarget(
+        snapshot: DeviceSnapshot,
+        customKernelSu: CustomKernelSuInfo?,
+    ): TargetProfile = if (customKernelSu != null) {
+        TargetProfile(
+            profileId = CUSTOM_PROFILE_ID,
+            displayName = context.getString(R.string.payload_source_custom),
+            models = setOf(snapshot.model),
+            kernelVersions = setOf(snapshot.kernelVersion),
+            exploit = RemoteArtifact("", -1),
+            kernelSu = RemoteArtifact("", customKernelSu.size),
+        )
+    } else {
+        resolveTarget(snapshot).copy(
+            profileId = CUSTOM_PROFILE_ID,
+            displayName = context.getString(R.string.payload_source_custom),
+            exploit = RemoteArtifact("", -1),
+        )
+    }
+
+    fun customPayloads(
+        profile: TargetProfile,
+        info: CustomPayloadInfo,
+        customKernelSu: CustomKernelSuInfo?,
+        onProgress: (String) -> Unit,
+    ): VerifiedPayloads {
+        require(info.file.exists()) { context.getString(R.string.custom_import_failed) }
+        val kernelSu = customKernelSu?.file?.also { file ->
+            require(file.exists()) { context.getString(R.string.custom_ksud_import_failed) }
+        } ?: run {
+            val directory = File(context.filesDir, "payloads/${profile.profileId}").apply { mkdirs() }
+            downloadArtifact(
+                profile.kernelSu,
+                File(directory, "ksud-s25u-kdp"),
+                context.getString(R.string.artifact_kernelsu),
+                onProgress,
+            )
+        }
+        Os.chmod(info.file.absolutePath, 0b100100100)
+        Os.chmod(kernelSu.absolutePath, 0b100100100)
+        return VerifiedPayloads(profile, info.file, kernelSu)
+    }
+
+    fun bundledPayloads(snapshot: DeviceSnapshot): VerifiedPayloads {
+        val profile = TargetProfile(
+            profileId = BUNDLED_PROFILE_ID,
+            displayName = context.getString(R.string.payload_source_bundled),
+            models = setOf(snapshot.model),
+            kernelVersions = setOf(snapshot.kernelVersion),
+            exploit = RemoteArtifact(BUNDLED_EXPLOIT_ASSET, BUNDLED_EXPLOIT_SIZE),
+            kernelSu = RemoteArtifact(BUNDLED_KERNEL_SU_ASSET, BUNDLED_KERNEL_SU_SIZE),
+        )
+        val directory = File(context.filesDir, "payloads/$BUNDLED_PROFILE_ID").apply { mkdirs() }
+        val exploit = extractBundledArtifact(
+            assetPath = BUNDLED_EXPLOIT_ASSET,
+            destination = File(directory, "cve-2026-43499-app.so"),
+            expectedSize = BUNDLED_EXPLOIT_SIZE,
+            expectedSha256 = BUNDLED_EXPLOIT_SHA256,
+            label = context.getString(R.string.artifact_exploit),
+        )
+        val kernelSu = extractBundledArtifact(
+            assetPath = BUNDLED_KERNEL_SU_ASSET,
+            destination = File(directory, "ksud-s25u-kdp"),
+            expectedSize = BUNDLED_KERNEL_SU_SIZE,
+            expectedSha256 = BUNDLED_KERNEL_SU_SHA256,
+            label = context.getString(R.string.artifact_kernelsu),
+        )
+        Os.chmod(exploit.absolutePath, 0b100100100)
+        Os.chmod(kernelSu.absolutePath, 0b100100100)
+        return VerifiedPayloads(profile, exploit, kernelSu)
+    }
+
     fun loadTargets(): List<TargetProfile> {
         val commit = resolveMainCommit()
         val manifestBytes = downloadBytes(rawUrl(commit, "support/targets-v3.json"), MAX_MANIFEST_BYTES)
@@ -33,7 +106,10 @@ class PayloadRepository(private val context: Context) {
         .firstOrNull { it.profileId == profileId }
         ?: error(context.getString(R.string.repo_profile_missing, profileId))
 
-    fun download(profile: TargetProfile, onProgress: (String) -> Unit): VerifiedPayloads {
+    fun download(
+        profile: TargetProfile,
+        onProgress: (String) -> Unit,
+    ): VerifiedPayloads {
         val directory = File(context.filesDir, "payloads/${profile.profileId}").apply { mkdirs() }
         val exploit = downloadArtifact(
             profile.exploit,
@@ -51,6 +127,66 @@ class PayloadRepository(private val context: Context) {
         Os.chmod(kernelSu.absolutePath, 0b100100100)
         return VerifiedPayloads(profile, exploit, kernelSu)
     }
+
+    private fun extractBundledArtifact(
+        assetPath: String,
+        destination: File,
+        expectedSize: Long,
+        expectedSha256: String,
+        label: String,
+    ): File {
+        if (
+            destination.isFile &&
+            destination.length() == expectedSize &&
+            sha256(destination).equals(expectedSha256, ignoreCase = true)
+        ) {
+            return destination
+        }
+        val temporary = File(destination.parentFile, "${destination.name}.part")
+        val digest = MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        context.assets.open(assetPath).use { input ->
+            FileOutputStream(temporary).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    require(total <= expectedSize) {
+                        context.getString(R.string.bundled_size_mismatch, label)
+                    }
+                    digest.update(buffer, 0, count)
+                    output.write(buffer, 0, count)
+                }
+                output.fd.sync()
+            }
+        }
+        require(total == expectedSize) { context.getString(R.string.bundled_size_mismatch, label) }
+        val actualSha256 = digest.digest().toHex()
+        require(actualSha256.equals(expectedSha256, ignoreCase = true)) {
+            context.getString(R.string.bundled_hash_mismatch, label)
+        }
+        if (destination.exists()) destination.delete()
+        require(temporary.renameTo(destination)) {
+            context.getString(R.string.repo_finalize_failed, label)
+        }
+        return destination
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private fun downloadArtifact(
         artifact: RemoteArtifact,
@@ -136,6 +272,16 @@ class PayloadRepository(private val context: Context) {
         }
 
     companion object {
+        const val CUSTOM_PROFILE_ID = "custom-payload"
+        const val BUNDLED_PROFILE_ID = "bundled-pa3q-s938bxxsbczg3"
+        private const val BUNDLED_EXPLOIT_ASSET = "payloads/cve-2026-43499-app.so"
+        private const val BUNDLED_KERNEL_SU_ASSET = "payloads/ksud-s25u-kdp"
+        private const val BUNDLED_EXPLOIT_SIZE = 104_128L
+        private const val BUNDLED_KERNEL_SU_SIZE = 6_407_096L
+        private const val BUNDLED_EXPLOIT_SHA256 =
+            "ba0894d1214e3c46305d8acb0ab065eb110833b4b9973c9250aca5bfcb98c214"
+        private const val BUNDLED_KERNEL_SU_SHA256 =
+            "fa3edcc7d168637394877b30cb1f909d762dda788ec14051f4ae79edd6562d63"
         private const val COMMIT_API_URL =
             "https://api.github.com/repos/BuSung-dev/Root-My-Galaxy-Payloads/git/ref/heads/main"
         private const val RAW_REPOSITORY =

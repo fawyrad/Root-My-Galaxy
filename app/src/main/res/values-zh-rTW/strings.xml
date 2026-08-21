@@ -7,6 +7,7 @@
 
     <string name="install_confirm_title">安裝 KernelSU？</string>
     <string name="install_confirm_body">應用程式將驗證支援設定檔，然後從 GitHub 下載並執行 exploit 與 KernelSU payload。</string>
+    <string name="install_confirm_body_custom">應用程式將執行你匯入的自訂動態庫（%1$s），並自動下載與安裝相符的 KernelSU payload。</string>
 
     <string name="action_confirm">確認</string>
     <string name="action_cancel">取消</string>

@@ -28,13 +28,26 @@ enum class AppThemeMode(val storedValue: String) {
     }
 }
 
+enum class PayloadSource(val storedValue: String) {
+    Online("online"),
+    Bundled("bundled"),
+    Custom("custom");
+
+    companion object {
+        fun fromStoredValue(value: String?): PayloadSource =
+            entries.firstOrNull { it.storedValue == value } ?: Online
+    }
+}
+
 object AppPreferences {
     private const val PREFERENCES = "appearance"
     private const val ACCENT_COLOR = "accent_color"
     private const val THEME_MODE = "theme_mode"
     private const val ADVANCED_MODE = "advanced_mode"
-	private const val DISABLE_KSU_MODULES = "disable_ksu_modules"
+    private const val DISABLE_KSU_MODULES = "disable_ksu_modules"
     private const val SHIZUKU_MODE = "shizuku_mode"
+    private const val PAYLOAD_SOURCE = "payload_source"
+    private const val CUSTOM_KERNEL_SU_ENABLED = "custom_kernel_su_enabled"
     private const val CONSUMED_INSTALL_REQUEST = "consumed_install_request"
 
     fun accentColor(context: Context): AccentColor = AccentColor.fromStoredValue(
@@ -76,6 +89,25 @@ object AppPreferences {
         .putBoolean(DISABLE_KSU_MODULES, enabled)
         .apply()
 	}
+
+    fun payloadSource(context: Context): PayloadSource = PayloadSource.fromStoredValue(
+        prefs(context).getString(PAYLOAD_SOURCE, null),
+    )
+
+    fun setPayloadSource(context: Context, source: PayloadSource) {
+        prefs(context).edit()
+            .putString(PAYLOAD_SOURCE, source.storedValue)
+            .apply()
+    }
+
+    fun customKernelSuEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(CUSTOM_KERNEL_SU_ENABLED, false)
+
+    fun setCustomKernelSuEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit()
+            .putBoolean(CUSTOM_KERNEL_SU_ENABLED, enabled)
+            .apply()
+    }
 
     fun shizukuMode(context: Context): Boolean =
         prefs(context).getBoolean(SHIZUKU_MODE, false)

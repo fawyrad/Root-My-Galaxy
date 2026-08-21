@@ -7,6 +7,7 @@
     <string name="nav_settings">Настройки</string>
     <string name="install_confirm_title">Установить KernelSU?</string>
     <string name="install_confirm_body">Приложение проверит профиль поддержки, а затем загрузит с GitHub и запустит эксплойт и payload KernelSU.</string>
+    <string name="install_confirm_body_custom">Приложение запустит вашу импортированную библиотеку (%1$s), затем автоматически загрузит и установит соответствующий payload KernelSU.</string>
     <string name="action_confirm">Подтвердить</string>
     <string name="action_cancel">Отмена</string>
     <string name="action_close">Закрыть</string>

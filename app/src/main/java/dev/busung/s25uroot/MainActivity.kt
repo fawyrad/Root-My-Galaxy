@@ -70,6 +70,9 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Error
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
@@ -105,6 +108,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -304,6 +308,12 @@ private fun RootApp(
     var compatibilityWarning by remember { mutableStateOf<CompatibilityWarning?>(null) }
     val device = remember { DeviceSnapshot.current() }
     val context = LocalContext.current
+    var payloadSource by remember { mutableStateOf(AppPreferences.payloadSource(context)) }
+    var customPayload by remember { mutableStateOf(CustomPayloadStore.current(context)) }
+    var customKernelSu by remember { mutableStateOf(CustomKernelSuStore.current(context)) }
+    var useCustomKernelSu by remember {
+        mutableStateOf(AppPreferences.customKernelSuEnabled(context) && customKernelSu != null)
+    }
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
@@ -338,6 +348,81 @@ private fun RootApp(
                 }
                 updateStatus = UpdateStatus.Available(info)
             }
+        }
+    }
+    val importPayloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Throwable) {
+        }
+        try {
+            val info = CustomPayloadStore.import(context, uri, queryDisplayName(context, uri))
+            customPayload = info
+            AppPreferences.setPayloadSource(context, PayloadSource.Custom)
+            payloadSource = PayloadSource.Custom
+            installViewModel.refresh()
+            Toast.makeText(
+                context,
+                context.getString(R.string.custom_import_success, info.displayName),
+                Toast.LENGTH_SHORT,
+            ).show()
+        } catch (error: Throwable) {
+            Toast.makeText(
+                context,
+                error.message ?: context.getString(R.string.custom_import_failed),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    val importKernelSuLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Throwable) {
+        }
+        try {
+            val info = CustomKernelSuStore.import(context, uri, queryDisplayName(context, uri))
+            customKernelSu = info
+            AppPreferences.setCustomKernelSuEnabled(context, true)
+            useCustomKernelSu = true
+            if (customPayload != null) {
+                AppPreferences.setPayloadSource(context, PayloadSource.Custom)
+                payloadSource = PayloadSource.Custom
+            }
+            installViewModel.refresh()
+            Toast.makeText(
+                context,
+                context.getString(R.string.custom_ksud_import_success, info.displayName),
+                Toast.LENGTH_SHORT,
+            ).show()
+        } catch (error: Throwable) {
+            Toast.makeText(
+                context,
+                error.message ?: context.getString(R.string.custom_ksud_import_failed),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    LaunchedEffect(customPayload, customKernelSu) {
+        if (customKernelSu == null && useCustomKernelSu) {
+            AppPreferences.setCustomKernelSuEnabled(context, false)
+            useCustomKernelSu = false
+        }
+        if (payloadSource == PayloadSource.Custom && customPayload == null) {
+            AppPreferences.setPayloadSource(context, PayloadSource.Bundled)
+            payloadSource = PayloadSource.Bundled
+            installViewModel.refresh()
         }
     }
     LaunchedEffect(Unit) { checkForUpdate() }
@@ -436,7 +521,27 @@ private fun RootApp(
                 DialogDimAmount(0.34f)
                 Text(stringResource(R.string.install_confirm_title))
             },
-            text = { Text(stringResource(R.string.install_confirm_body)) },
+            text = {
+                Text(
+                    when {
+                        selectedProfile != null -> stringResource(R.string.install_confirm_body)
+                        payloadSource == PayloadSource.Bundled -> stringResource(
+                            R.string.install_confirm_body_bundled,
+                        )
+                        payloadSource == PayloadSource.Custom &&
+                            useCustomKernelSu && customKernelSu != null -> stringResource(
+                            R.string.install_confirm_body_custom_ksud,
+                            customPayload?.displayName.orEmpty(),
+                            customKernelSu?.displayName.orEmpty(),
+                        )
+                        payloadSource == PayloadSource.Custom -> stringResource(
+                            R.string.install_confirm_body_custom,
+                            customPayload?.displayName.orEmpty(),
+                        )
+                        else -> stringResource(R.string.install_confirm_body)
+                    },
+                )
+            },
             confirmButton = {
                 FilledTonalButton(onClick = {
                     clickHaptic(view)
@@ -486,13 +591,65 @@ private fun RootApp(
                     padding = padding,
                     device = device,
                     installState = installState,
+                    payloadSource = payloadSource,
+                    customPayload = customPayload,
+                    customKernelSu = customKernelSu,
+                    useCustomKernelSu = useCustomKernelSu,
                     updateStatus = updateStatus,
                     updateCardDismissed = updateCardDismissed,
                     onDismissUpdateCard = { updateCardDismissed = true },
                     onStartDownload = startDownload,
+                    onPayloadSourceChanged = { source ->
+                        if (
+                            source != PayloadSource.Custom ||
+                            customPayload != null
+                        ) {
+                            AppPreferences.setPayloadSource(context, source)
+                            payloadSource = source
+                            installViewModel.refresh()
+                        }
+                    },
+                    onImportPayload = {
+                        importPayloadLauncher.launch(arrayOf("*/*"))
+                    },
+                    onRemovePayload = {
+                        CustomPayloadStore.clear(context)
+                        customPayload = null
+                        if (payloadSource == PayloadSource.Custom) {
+                            AppPreferences.setPayloadSource(context, PayloadSource.Bundled)
+                            payloadSource = PayloadSource.Bundled
+                        }
+                        installViewModel.refresh()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.custom_removed),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                    onImportKernelSu = {
+                        importKernelSuLauncher.launch(arrayOf("*/*"))
+                    },
+                    onUseCustomKernelSuChanged = { selected ->
+                        val enabled = selected && customKernelSu != null
+                        AppPreferences.setCustomKernelSuEnabled(context, enabled)
+                        useCustomKernelSu = enabled
+                        installViewModel.refresh()
+                    },
+                    onRemoveKernelSu = {
+                        CustomKernelSuStore.clear(context)
+                        AppPreferences.setCustomKernelSuEnabled(context, false)
+                        customKernelSu = null
+                        useCustomKernelSu = false
+                        installViewModel.refresh()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.custom_ksud_removed),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
                     onInstall = {
                         selectedProfile = null
-                        if (advancedMode) {
+                        if (advancedMode && payloadSource == PayloadSource.Online) {
                             showTargetPicker = true
                             installViewModel.loadTargetCatalog()
                         } else {
@@ -563,10 +720,20 @@ private fun OverviewPage(
     padding: PaddingValues,
     device: DeviceSnapshot,
     installState: InstallUiState,
+    payloadSource: PayloadSource,
+    customPayload: CustomPayloadInfo?,
+    customKernelSu: CustomKernelSuInfo?,
+    useCustomKernelSu: Boolean,
     updateStatus: UpdateStatus,
     updateCardDismissed: Boolean,
     onDismissUpdateCard: () -> Unit,
     onStartDownload: (UpdateInfo) -> Unit,
+    onPayloadSourceChanged: (PayloadSource) -> Unit,
+    onImportPayload: () -> Unit,
+    onRemovePayload: () -> Unit,
+    onImportKernelSu: () -> Unit,
+    onUseCustomKernelSuChanged: (Boolean) -> Unit,
+    onRemoveKernelSu: () -> Unit,
     onInstall: () -> Unit,
 ) {
     LazyColumn(
@@ -611,9 +778,361 @@ private fun OverviewPage(
             }
         }
         item { InstallStatusCard(installState, onInstall) }
+        item {
+            PayloadSourceMenu(
+                payloadSource = payloadSource,
+                customPayload = customPayload,
+                customKernelSu = customKernelSu,
+                useCustomKernelSu = useCustomKernelSu,
+                enabled = !installState.busy,
+                onSourceChanged = onPayloadSourceChanged,
+                onImportPayload = onImportPayload,
+                onRemovePayload = onRemovePayload,
+                onImportKernelSu = onImportKernelSu,
+                onUseCustomKernelSuChanged = onUseCustomKernelSuChanged,
+                onRemoveKernelSu = onRemoveKernelSu,
+            )
+        }
         item { DeviceCard(device) }
         item { HowItWorksCard() }
     }
+}
+
+@Composable
+private fun PayloadSourceMenu(
+    payloadSource: PayloadSource,
+    customPayload: CustomPayloadInfo?,
+    customKernelSu: CustomKernelSuInfo?,
+    useCustomKernelSu: Boolean,
+    enabled: Boolean,
+    onSourceChanged: (PayloadSource) -> Unit,
+    onImportPayload: () -> Unit,
+    onRemovePayload: () -> Unit,
+    onImportKernelSu: () -> Unit,
+    onUseCustomKernelSuChanged: (Boolean) -> Unit,
+    onRemoveKernelSu: () -> Unit,
+) {
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+    val customReady = customPayload != null
+    val customDetail = when {
+        customPayload == null -> stringResource(R.string.payload_source_custom_detail)
+        useCustomKernelSu && customKernelSu != null -> stringResource(
+            R.string.payload_source_custom_ready,
+            customPayload?.displayName.orEmpty(),
+            customKernelSu?.displayName.orEmpty(),
+        )
+        else -> stringResource(
+            R.string.payload_source_custom_online_ksud,
+            customPayload?.displayName.orEmpty(),
+        )
+    }
+    val selectedTitle = stringResource(
+        when (payloadSource) {
+            PayloadSource.Online -> R.string.payload_source_online
+            PayloadSource.Bundled -> R.string.payload_source_bundled
+            PayloadSource.Custom -> R.string.payload_source_custom
+        },
+    )
+    val selectedDetail = when (payloadSource) {
+        PayloadSource.Online -> stringResource(R.string.payload_source_online_detail)
+        PayloadSource.Bundled -> stringResource(R.string.payload_source_bundled_detail)
+        PayloadSource.Custom -> customDetail
+    }
+    val selectedIcon = when (payloadSource) {
+        PayloadSource.Online -> Icons.Rounded.Language
+        PayloadSource.Bundled -> Icons.Rounded.Save
+        PayloadSource.Custom -> Icons.Rounded.FolderOpen
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled) { expanded = !expanded }
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            selectedIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.payload_menu_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        selectedTitle,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        selectedDetail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (expanded) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = stringResource(
+                        if (expanded) R.string.payload_menu_collapse else R.string.payload_menu_expand,
+                    ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    HorizontalDivider()
+                    Text(
+                        stringResource(R.string.payload_menu_choose),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                    PayloadSourceChoice(
+                        icon = Icons.Rounded.Language,
+                        title = stringResource(R.string.payload_source_online),
+                        detail = stringResource(R.string.payload_source_online_detail),
+                        selected = payloadSource == PayloadSource.Online,
+                        enabled = enabled,
+                        onSelect = { onSourceChanged(PayloadSource.Online) },
+                    )
+                    PayloadSourceChoice(
+                        icon = Icons.Rounded.Save,
+                        title = stringResource(R.string.payload_source_bundled),
+                        detail = stringResource(R.string.payload_source_bundled_detail),
+                        selected = payloadSource == PayloadSource.Bundled,
+                        enabled = enabled,
+                        onSelect = { onSourceChanged(PayloadSource.Bundled) },
+                    )
+                    PayloadSourceChoice(
+                        icon = Icons.Rounded.FolderOpen,
+                        title = stringResource(R.string.payload_source_custom),
+                        detail = customDetail,
+                        selected = payloadSource == PayloadSource.Custom,
+                        enabled = enabled && customReady,
+                        onSelect = { onSourceChanged(PayloadSource.Custom) },
+                    )
+                    Text(
+                        stringResource(R.string.custom_files_title),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp, end = 4.dp),
+                    )
+                    PayloadFileRow(
+                        title = stringResource(R.string.custom_payload_file),
+                        detail = customPayload?.let {
+                            stringResource(
+                                R.string.custom_meta_format,
+                                it.displayName,
+                                android.text.format.Formatter.formatFileSize(context, it.size),
+                            )
+                        } ?: stringResource(R.string.custom_file_missing),
+                        sha256 = customPayload?.sha256,
+                        enabled = enabled,
+                        onImport = onImportPayload,
+                        onRemove = if (customPayload != null) onRemovePayload else null,
+                    )
+                    PayloadFileRow(
+                        title = stringResource(R.string.custom_ksud_file),
+                        detail = customKernelSu?.let {
+                            stringResource(
+                                R.string.custom_meta_format,
+                                it.displayName,
+                                android.text.format.Formatter.formatFileSize(context, it.size),
+                            )
+                        } ?: stringResource(R.string.custom_file_missing),
+                        sha256 = customKernelSu?.sha256,
+                        enabled = enabled,
+                        onImport = onImportKernelSu,
+                        onRemove = if (customKernelSu != null) onRemoveKernelSu else null,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = useCustomKernelSu,
+                                enabled = enabled && customKernelSu != null,
+                                role = Role.Checkbox,
+                                onValueChange = onUseCustomKernelSuChanged,
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Checkbox(
+                            checked = useCustomKernelSu,
+                            onCheckedChange = null,
+                            enabled = enabled && customKernelSu != null,
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.custom_ksud_use),
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                when {
+                                    customKernelSu == null -> stringResource(R.string.custom_ksud_none)
+                                    useCustomKernelSu -> stringResource(R.string.custom_ksud_selected_detail)
+                                    else -> stringResource(R.string.custom_ksud_online_detail)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PayloadFileRow(
+    title: String,
+    detail: String,
+    sha256: String?,
+    enabled: Boolean,
+    onImport: () -> Unit,
+    onRemove: (() -> Unit)?,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                TextButton(onClick = onImport, enabled = enabled) {
+                    Icon(
+                        Icons.Rounded.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        stringResource(
+                            if (sha256 == null) R.string.custom_file_import else R.string.custom_file_replace,
+                        ),
+                    )
+                }
+                if (onRemove != null) {
+                    IconButton(onClick = onRemove, enabled = enabled) {
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = stringResource(R.string.custom_remove_action),
+                        )
+                    }
+                }
+            }
+            if (sha256 != null) {
+                Text(
+                    stringResource(R.string.custom_sha_format, sha256.take(16) + "…"),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PayloadSourceChoice(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    val contentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        selected -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onSelect,
+            ),
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = contentColor)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = contentColor)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor.copy(alpha = 0.72f),
+                )
+            }
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
+        }
+    }
+}
+
+private fun queryDisplayName(context: Context, uri: Uri): String = try {
+    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+    } ?: uri.lastPathSegment.orEmpty()
+} catch (_: Throwable) {
+    uri.lastPathSegment.orEmpty()
 }
 
 private sealed interface UpdateStatus {

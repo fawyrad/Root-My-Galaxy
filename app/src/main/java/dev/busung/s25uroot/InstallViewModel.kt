@@ -83,6 +83,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 )
                 return@launch
             }
+            val localLabel = activeLocalPayloadLabel()
+            if (localLabel != null) {
+                mutableState.value = InstallUiState(
+                    phase = InstallPhase.Ready,
+                    message = app.getString(R.string.status_not_installed),
+                    probeOutput = probe,
+                    log = "$probe\n${app.getString(R.string.log_local_ready, localLabel)}",
+                )
+                return@launch
+            }
             try {
                 val profile = repository.resolveTarget(DeviceSnapshot.current())
                 mutableState.value = InstallUiState(
@@ -149,29 +159,84 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     }
                     appendLog(app.getString(R.string.log_shizuku_permission))
                 }
-                setPhase(InstallPhase.Checking, app.getString(R.string.status_checking_github))
-                val profile = if (profileId == null) {
-                    repository.resolveTarget(DeviceSnapshot.current())
-                } else {
-                    repository.resolveTarget(profileId)
+                val customInfo = CustomPayloadStore.current(app)
+                val customKernelSuRequested = AppPreferences.customKernelSuEnabled(app)
+                val customKernelSu = CustomKernelSuStore.current(app)
+                    .takeIf { customKernelSuRequested }
+                val requestedSource = AppPreferences.payloadSource(app)
+                if (customKernelSuRequested && customKernelSu == null) {
+                    appendLog(app.getString(R.string.log_custom_ksud_missing_fallback))
                 }
-                appendLog(app.getString(R.string.log_profile, profile.profileId))
-                updateHistoryProfile(profile.profileId)
-
-                setPhase(InstallPhase.Downloading, app.getString(R.string.status_downloading_payload))
-                val payloads = repository.download(profile) { appendLog("[*] $it") }
-                appendLog(app.getString(R.string.log_download_verified))
+                val source = when {
+                    profileId != null -> PayloadSource.Online
+                    requestedSource == PayloadSource.Custom && customInfo == null -> {
+                        appendLog(app.getString(R.string.log_custom_missing_fallback))
+                        PayloadSource.Bundled
+                    }
+                    else -> requestedSource
+                }
+                if (source == PayloadSource.Online) {
+                    setPhase(InstallPhase.Checking, app.getString(R.string.status_checking_github))
+                } else {
+                    setPhase(InstallPhase.Checking, app.getString(R.string.status_local_preparing))
+                }
+                val payloads = when (source) {
+                    PayloadSource.Bundled -> {
+                        val prepared = repository.bundledPayloads(DeviceSnapshot.current())
+                        appendLog(app.getString(R.string.log_profile, prepared.profile.profileId))
+                        updateHistoryProfile(prepared.profile.profileId)
+                        appendLog(app.getString(R.string.log_bundled_payload_ready))
+                        prepared
+                    }
+                    PayloadSource.Custom -> {
+                        val info = customInfo ?: error(app.getString(R.string.custom_import_failed))
+                        val profile = repository.customTarget(DeviceSnapshot.current(), customKernelSu)
+                        appendLog(app.getString(R.string.log_profile, profile.profileId))
+                        updateHistoryProfile(profile.profileId)
+                        appendLog(app.getString(R.string.log_custom_payload, info.displayName))
+                        if (customKernelSu == null) {
+                            setPhase(
+                                InstallPhase.Downloading,
+                                app.getString(R.string.status_downloading_kernelsu),
+                            )
+                        } else {
+                            appendLog(app.getString(R.string.log_custom_ksud, customKernelSu.displayName))
+                        }
+                        val prepared = repository.customPayloads(
+                            profile,
+                            info,
+                            customKernelSu,
+                        ) { appendLog("[*] $it") }
+                        if (customKernelSu == null) {
+                            appendLog(app.getString(R.string.log_ksud_download_verified))
+                        }
+                        prepared
+                    }
+                    PayloadSource.Online -> {
+                        val profile = if (profileId == null) {
+                            repository.resolveTarget(DeviceSnapshot.current())
+                        } else {
+                            repository.resolveTarget(profileId)
+                        }
+                        appendLog(app.getString(R.string.log_profile, profile.profileId))
+                        updateHistoryProfile(profile.profileId)
+                        setPhase(InstallPhase.Downloading, app.getString(R.string.status_downloading_payload))
+                        val downloaded = repository.download(profile) { appendLog("[*] $it") }
+                        appendLog(app.getString(R.string.log_download_verified))
+                        downloaded
+                    }
+                }
 
                 setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit_running))
                 executeExploit(payloads.exploit)
 
-				if (AppPreferences.disableKsuModules(app)) {
-					DisableConflictingKSUModules()
-				} else {
-					appendLog("[*] Disable KSU Modules option is OFF")
-				}
+                if (AppPreferences.disableKsuModules(app)) {
+                    DisableConflictingKSUModules()
+                } else {
+                    appendLog("[*] Disable KSU Modules option is OFF")
+                }
 
-				setPhase(InstallPhase.LoadingKernelSu, app.getString(R.string.status_ksu_loading))
+                setPhase(InstallPhase.LoadingKernelSu, app.getString(R.string.status_ksu_loading))
                 installKernelSu(payloads)
 
                 setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
@@ -336,12 +401,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun installKernelSu(payloads: VerifiedPayloads) {
+        val kernelSu = requireNotNull(payloads.kernelSu)
         if (shizukuEnabled()) {
-            shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_PATH, "755")
-            shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_STAGE_PATH, "755")
+            shizukuStage(kernelSu, SHIZUKU_KSUD_PATH, "755")
+            shizukuStage(kernelSu, SHIZUKU_KSUD_STAGE_PATH, "755")
             appendLog(app.getString(R.string.log_ksu_staged))
         } else {
-            val source = shellQuote(payloads.kernelSu.absolutePath)
+            val source = shellQuote(kernelSu.absolutePath)
             val stageCommand =
                 "/system/bin/cp $source /data/local/tmp/ksud-s25u-kdp && " +
                     "/system/bin/cp $source /data/local/tmp/.ksud-stage && " +
@@ -359,6 +425,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
     }
+
+    private fun activeLocalPayloadLabel(): String? =
+        when (AppPreferences.payloadSource(app)) {
+            PayloadSource.Bundled -> app.getString(R.string.payload_source_bundled)
+            PayloadSource.Custom -> {
+                val payload = CustomPayloadStore.current(app)
+                payload?.displayName
+            }
+            PayloadSource.Online -> null
+        }
 
     private fun detectInstalled(): Boolean {
         if (NativeProbe.isKernelSuActive()) return true

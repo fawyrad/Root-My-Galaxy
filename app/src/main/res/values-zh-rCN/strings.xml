@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Root My Galaxy</string><string name="nav_overview">主页</string><string name="nav_history">运行记录</string><string name="nav_settings">设置</string>
-    <string name="install_confirm_title">安装 KernelSU？</string><string name="install_confirm_body">应用将验证支持配置，然后从 GitHub 下载并运行 exploit 与 KernelSU payload。</string>
+    <string name="install_confirm_title">安装 KernelSU？</string><string name="install_confirm_body">应用将验证支持配置，然后从 GitHub 下载并运行 exploit 与 KernelSU payload。</string><string name="install_confirm_body_bundled">应用将运行内置的 S938BXXSBCZG3 payload 并安装内置 ksud，不会下载 payload 文件。</string><string name="install_confirm_body_online_custom_ksud">应用将下载并运行匹配的 exploit，然后安装你导入的 ksud（%1$s）。将跳过在线 ksud 下载。</string><string name="install_confirm_body_custom">应用将运行你导入的自定义动态库（%1$s），并自动下载和安装匹配的 KernelSU payload。</string><string name="install_confirm_body_custom_ksud">应用将运行你导入的自定义动态库（%1$s），并安装你导入的 ksud（%2$s）。将跳过在线 ksud 下载。</string>
     <string name="action_confirm">确认</string><string name="action_cancel">取消</string><string name="action_close">关闭</string><string name="action_retry">重试</string><string name="action_done">完成</string><string name="action_back">返回</string>
     <string name="install_tap_manager">点击安装 KernelSU Manager</string><string name="install_tap_retry">点击重试</string><string name="install_tap_start">点击安装 KernelSU</string>
     <string name="device">设备</string><string name="firmware">固件</string><string name="system">系统</string><string name="kernel">内核</string><string name="system_abi">系统 ABI</string>
@@ -61,4 +61,54 @@
         <item quantity="other">这些运行记录及其日志将被永久删除。</item>
     </plurals>
     <string name="history_delete">删除</string>
+    <string name="custom_payload_title">自定义动态库</string>
+    <string name="custom_payload_description">选择 CVE-2026-43499 提权使用的动态库。也可导入并勾选自定义 ksud，以跳过在线下载。</string>
+    <string name="payload_menu_title">Payload 来源</string>
+    <string name="payload_menu_choose">选择 exploit 与 ksud 的提供方式</string>
+    <string name="payload_menu_expand">展开 payload 菜单</string>
+    <string name="payload_menu_collapse">收起 payload 菜单</string>
+    <string name="payload_source_online">在线仓库</string>
+    <string name="payload_source_online_detail">三星手机可用，按设备型号与内核版本匹配下载</string>
+    <string name="payload_source_bundled">内置 payload</string>
+    <string name="payload_source_bundled_detail">内置 S938BXXSBCZG3 payload 与 ksud · 无需下载</string>
+    <string name="payload_source_custom">自定义 payload</string>
+    <string name="payload_source_custom_detail">请在下方导入 payload 动态库；自定义 ksud 为可选项</string>
+    <string name="payload_source_custom_ready">已就绪 · %1$s + %2$s</string>
+    <string name="payload_source_custom_online_ksud">%1$s · 将下载匹配的 ksud</string>
+    <string name="custom_files_title">自定义文件</string>
+    <string name="custom_payload_file">Payload 动态库 (.so)</string>
+    <string name="custom_ksud_file">KernelSU 守护程序 (ksud)</string>
+    <string name="custom_file_missing">尚未导入</string>
+    <string name="custom_file_import">导入</string>
+    <string name="custom_file_replace">替换</string>
+    <string name="custom_import_action">导入动态库</string>
+    <string name="custom_remove_action">移除</string>
+    <string name="custom_none">尚未导入动态库</string>
+    <string name="custom_import_success">已导入 %1$s</string>
+    <string name="custom_import_failed">导入失败</string>
+    <string name="custom_import_invalid">所选文件不是有效的 ELF 动态库</string>
+    <string name="custom_removed">已移除自定义动态库</string>
+    <string name="custom_meta_format">%1$s · %2$s</string>
+    <string name="custom_sha_format">SHA-256：%1$s</string>
+    <string name="custom_ksud_use">使用导入的 ksud</string>
+    <string name="custom_ksud_none">尚未导入自定义 ksud；将在线下载匹配版本</string>
+    <string name="custom_ksud_selected_detail">已选择 · 将跳过在线 ksud 下载</string>
+    <string name="custom_ksud_online_detail">未选择 · 将下载匹配的 ksud</string>
+    <string name="custom_ksud_import_action">导入 ksud</string>
+    <string name="custom_ksud_import_success">已导入 ksud %1$s</string>
+    <string name="custom_ksud_import_failed">ksud 导入失败</string>
+    <string name="custom_ksud_import_invalid">所选 ksud 不是有效的 ELF 可执行文件</string>
+    <string name="custom_ksud_removed">已移除自定义 ksud</string>
+    <string name="log_custom_payload">使用自定义动态库：%1$s</string>
+    <string name="log_custom_missing_fallback">自定义动态库不存在，回退到内置 payload</string>
+    <string name="log_custom_ksud">使用导入的 ksud：%1$s；已跳过在线 ksud 下载</string>
+    <string name="log_custom_ksud_missing_fallback">导入的 ksud 不存在；回退到在线匹配版本</string>
+    <string name="log_custom_pair_missing_fallback">自定义 payload 组合不完整；回退到内置 payload</string>
+    <string name="log_bundled_payload_ready">使用内置 payload 与 ksud；已跳过在线 payload 下载</string>
+    <string name="log_ksud_download_verified">[+] KernelSU payload 下载完成</string>
+    <string name="log_local_ready">本地载荷已启用：%1$s</string>
+    <string name="status_local_preparing">正在准备本地载荷…</string>
+    <string name="bundled_size_mismatch">内置 %1$s 的文件大小异常</string>
+    <string name="bundled_hash_mismatch">内置 %1$s 完整性验证失败</string>
+    <string name="status_downloading_kernelsu">正在下载匹配的 KernelSU payload</string>
 </resources>

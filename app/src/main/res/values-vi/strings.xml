@@ -6,6 +6,7 @@
     <string name="nav_settings">Cài đặt</string>
     <string name="install_confirm_title">Cài đặt KernelSU?</string>
     <string name="install_confirm_body">Ứng dụng sẽ xác minh hồ sơ hỗ trợ, sau đó tải xuống và chạy exploit cùng payload KernelSU từ GitHub.</string>
+    <string name="install_confirm_body_custom">Ứng dụng sẽ chạy thư viện tùy chỉnh đã nhập (%1$s), sau đó tự động tải xuống và cài đặt payload KernelSU phù hợp.</string>
     <string name="action_confirm">Xác nhận</string>
     <string name="action_cancel">Hủy</string>
     <string name="action_close">Đóng</string>

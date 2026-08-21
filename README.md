@@ -25,6 +25,29 @@ the phone. For example, `6.6.98-android15-8-...` matches `6.6.98`. Advanced
 mode filters the catalog by both values and allows manual selection with model
 and kernel-version warnings.
 
+The Home screen has a collapsible payload-source menu with three complete
+pipelines:
+
+1. **Online repository** resolves the device profile and downloads the matching
+   exploit and ksud.
+2. **Bundled payload** extracts the included S938BXXSBCZG3 exploit and ksud from
+   the APK, verifies their exact size and SHA-256 fingerprint, and performs no
+   payload download.
+3. **Custom payload** imports a local `.so` into app-private storage. It becomes
+   selectable as soon as that payload is present. A custom ksud is optional: if
+   none is selected, the app resolves and downloads the matching online ksud;
+   selecting an imported ksud skips that download.
+
+Bundled and custom files are placed directly into `VerifiedPayloads`, then sent
+through the same exploit, ksud staging, and KernelSU `--late-load` verification
+used by the online source. Custom imports are limited to 256 MB, checked for the
+ELF magic header, and recorded with a SHA-256 fingerprint. Removing the custom
+payload switches an active custom selection to the bundled source; removing
+only custom ksud keeps the custom payload active and restores online ksud.
+
+Custom payload import is based on the Apache-2.0 implementation in
+[hmascs/KSuRoot](https://github.com/hmascs/KSuRoot).
+
 ## Build
 
 Requirements:

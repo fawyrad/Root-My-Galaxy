@@ -6,6 +6,7 @@
     <string name="nav_settings">Ayarlar</string>
     <string name="install_confirm_title">KernelSU yüklensin mi?</string>
     <string name="install_confirm_body">Uygulama destek profilini doğrulayacak, ardından exploit ve KernelSU payload dosyalarını GitHub\'dan indirip çalıştıracaktır.</string>
+    <string name="install_confirm_body_custom">Uygulama, içe aktardığınız özel kitaplığı (%1$s) çalıştıracak ve eşleşen KernelSU payload dosyasını otomatik olarak indirip kuracaktır.</string>
     <string name="action_confirm">Onayla</string>
     <string name="action_cancel">İptal</string>
     <string name="action_close">Kapat</string>
